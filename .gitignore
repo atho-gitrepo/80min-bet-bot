@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.pyc
+
+# Env & secrets
+.env
+config/settings.env
+firebase_credentials.json
+
+# Logs
+logs/
+*.log
