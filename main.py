@@ -214,5 +214,5 @@ if __name__ == "__main__":
                 send_daily_summary()
                 last_summary = now
 
-        time.sleep(60)
+        time.sleep(90)
 
