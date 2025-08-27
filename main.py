@@ -45,17 +45,30 @@ def send_telegram(message: str):
         logger.error(f"Telegram error: {e}")
 
 # =====================
-# FETCH LIVE MATCHES
+# API HELPERS
 # =====================
 def get_live_matches():
     try:
         url = f"{BASE_URL}/fixtures?live=all"
         response = requests.get(url, headers=HEADERS, timeout=15)
+        response.raise_for_status()
         data = response.json()
         return data.get("response", [])
     except Exception as e:
         logger.error(f"Error fetching live matches: {e}")
         return []
+
+def get_fixture_by_id(fixture_id: str):
+    """Fetches details for a single fixture by its ID."""
+    try:
+        url = f"{BASE_URL}/fixtures?id={fixture_id}"
+        response = requests.get(url, headers=HEADERS, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        return data["response"][0] if data.get("response") else None
+    except Exception as e:
+        logger.error(f"Error fetching fixture {fixture_id}: {e}")
+        return None
 
 # =====================
 # 80' TRIGGER
@@ -78,25 +91,21 @@ def check_80_minute_draws():
                 continue
 
             fixture_id = str(fixture["id"])
-            home_team = teams["home"]["name"]
-            away_team = teams["away"]["name"]
-            match_name = f"{home_team} vs {away_team}"
-
+            
             # Check if already logged
-            doc_ref = db.collection("unresolved_bets").document(fixture_id)
-            if doc_ref.get().exists:
+            if db.collection("unresolved_bets").document(fixture_id).get().exists:
                 continue
 
             bet_data = {
-                "match_name": match_name,
+                "match_name": f"{teams['home']['name']} vs {teams['away']['name']}",
                 "league": league["name"],
                 "country": league["country"],
                 "score": score,
                 "alerted_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
             }
-            doc_ref.set(bet_data)
+            db.collection("unresolved_bets").document(fixture_id).set(bet_data)
 
-            msg = f"⚽ 80' Alert!\n{match_name}\nScore: {score}\nLeague: {league['name']}"
+            msg = f"⚽ 80' Alert!\n{bet_data['match_name']}\nScore: {score}\nLeague: {league['name']}"
             send_telegram(msg)
             logger.info(f"Logged 80' bet: {bet_data}")
 
@@ -112,19 +121,19 @@ def resolve_finished_matches():
     if not unresolved_bets:
         return
 
-    matches = get_live_matches()
-    for match in matches:
-        fixture = match["fixture"]
-        status = fixture["status"]["short"]
+    for fixture_id, bet in unresolved_bets.items():
+        # Fetch the specific fixture data directly
+        match = get_fixture_by_id(fixture_id)
 
+        if not match:
+            continue
+
+        status = match["fixture"]["status"]["short"]
+        
+        # Only process if the match has finished
         if status not in ["FT", "AET", "PEN"]:
             continue
 
-        fixture_id = str(fixture["id"])
-        if fixture_id not in unresolved_bets:
-            continue
-
-        bet = unresolved_bets[fixture_id]
         home_goals = match["goals"]["home"] or 0
         away_goals = match["goals"]["away"] or 0
         ft_score = f"{home_goals}-{away_goals}"
@@ -151,6 +160,9 @@ def resolve_finished_matches():
         )
         send_telegram(msg)
         logger.info(f"Resolved bet {fixture_id}: {outcome}")
+        
+        # Add a small delay to avoid rate-limiting
+        time.sleep(1)
 
 # =====================
 # DAILY SUMMARY
@@ -203,3 +215,4 @@ if __name__ == "__main__":
                 last_summary = now
 
         time.sleep(60)
+
